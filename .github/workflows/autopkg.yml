@@ -1,5 +1,4 @@
----
-name: AutoPkg Runner
+name: AutoPkg Run via CLI
 
 on:
   # schedule:
@@ -10,124 +9,72 @@ jobs:
   autopkg-run:
     runs-on: macos-latest
     env:
-      AUTOPKG_SHA256: "304f51506103b5daae44a977df9f53c0ee43f164813690b674b1d1437c833b03"
-      AUTOPKG_URL: "https://github.com/autopkg/autopkg/releases/download/v2.7.6/autopkg-2.7.6.pkg"
-      MUNKI_SHA256: "ba52389db369dd123297bfdf30daf37baba44bf967144382363b3b08ab5fab90"
-      MUNKI_URL: "https://github.com/munki/munki/releases/download/v5.6.3/munkitools-5.6.3.4401.pkg"
-      AUTOPKG_DIR: "${{ github.workspace }}/AutoPkg"
-      MUNKI_REPO: "AnywhereOps/munkisrv/munkirepo"
-
-    permissions:
-      contents: write
-      pull-requests: write
-      id-token: write
-
+      MUNKI_VERSION: 6.7.0
+      MUNKI_EXPLICIT_VERSION: 6.7.0.4731
+      APKG_VERSION: 2.7.6 # 'AUTOPKG_' gets injected as an env var
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-2
-
-      - name: Fetch GitHub App secret
-        uses: aws-actions/aws-secretsmanager-get-secrets@v2
-        with:
-          secret-ids: |
-            MUNKISRV_APP, ${{ secrets.MUNKISRV_GITHUB_APP_ARN }}
-          parse-json-secrets: true
-
-      - name: Set Munki repo vars
-        run: |
-          echo "MUNKI_GH_REPO=$(echo $MUNKI_REPO | cut -d'/' -f1,2)" >> $GITHUB_ENV
-          echo "MUNKI_CLONE_DIR=$(echo $MUNKI_REPO | cut -d'/' -f2)" >> $GITHUB_ENV
-          SUBDIR=$(echo $MUNKI_REPO | cut -d'/' -f3-)
-          echo "MUNKI_DIR=${GITHUB_WORKSPACE}/$(echo $MUNKI_REPO | cut -d'/' -f2)${SUBDIR:+/$SUBDIR}" >> $GITHUB_ENV
-
       - name: Checkout repository
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 #6.0.0
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Required for accurate diffs
 
-      - name: Generate GitHub App token
-        uses: actions/create-github-app-token@7e473efe3cb98aa54f8d4bac15400b15fad77d94 #2.2.0
-        id: app-token
-        with:
-          app-id: ${{ env.MUNKISRV_APP_APP_ID }}
-          private-key: ${{ env.MUNKISRV_APP_PRIVATE_KEY }}
-          owner: AnywhereOps
-
-      - name: Checkout Munki repo
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 #6.0.0
-        with:
-          repository: ${{ env.MUNKI_GH_REPO }}
-          token: ${{ steps.app-token.outputs.token }}
-          fetch-depth: 0  # Full history needed for worktrees
-          path: ${{ env.MUNKI_CLONE_DIR }}
-
-      - name: Configure Munki repo push credentials
-        run: |
-          cd ${{ env.MUNKI_CLONE_DIR }}
-          git remote set-url origin "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ env.MUNKI_GH_REPO }}.git"
-
       - name: Setup Cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 #4.3.0
+        uses: actions/cache@v4
         with:
           path: |
             metadata_cache.json
           key: cache-${{ hashFiles('uv.lock') }}
 
-      - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
 
       - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Munki
-        run: |
-          curl -L ${{ env.MUNKI_URL }} --output /tmp/munkitools.pkg
-          echo "${{ env.MUNKI_SHA256 }} */tmp/munkitools.pkg" | shasum -c
-          if [[ $? != "0" ]]; then exit 1; fi
-          sudo installer -pkg /tmp/munkitools.pkg -target /
-
       - name: Install AutoPkg
-        run: |
-          curl -L ${{ env.AUTOPKG_URL }} --output /tmp/autopkg.pkg
-          echo "${{ env.AUTOPKG_SHA256 }} */tmp/autopkg.pkg" | shasum -c
-          if [[ $? != "0" ]]; then exit 1; fi
-          sudo installer -pkg /tmp/autopkg.pkg -target /
+        uses: joncrain/macos-pkg-install@v1.0
+        with:
+          pkg_url: https://github.com/autopkg/autopkg/releases/download/v${{ env.APKG_VERSION }}/autopkg-${{ env.APKG_VERSION }}.pkg
 
+      - name: Install Munki
+        uses: joncrain/macos-pkg-install@v1.0
+        with:
+          pkg_url: https://github.com/munki/munki/releases/download/v${{ env.MUNKI_VERSION }}/munkitools-${{ env.MUNKI_EXPLICIT_VERSION }}.pkg
 
       - name: Configure AutoPkg
         run: |
+          AUTOPKG_DIR="${GITHUB_WORKSPACE}/AutoPkg"
+          MUNKI_DIR="${GITHUB_WORKSPACE}/Munki"
+
           defaults write com.github.autopkg CACHE_DIR "${AUTOPKG_DIR}/Cache"
+          defaults write com.github.autopkg FAIL_RECIPES_WITHOUT_TRUST_INFO -bool TRUE
+          defaults write com.github.autopkg GITHUB_TOKEN "${{ secrets.GITHUB_TOKEN }}"
           defaults write com.github.autopkg MUNKI_REPO "${MUNKI_DIR}"
           defaults write com.github.autopkg RECIPE_OVERRIDE_DIRS "${AUTOPKG_DIR}/Overrides"
-          defaults write com.github.autopkg RECIPE_SEARCH_DIRS "${AUTOPKG_DIR}/Recipes"
-          defaults write com.github.autopkg FAIL_RECIPES_WITHOUT_TRUST_INFO -bool No
-          defaults write com.github.autopkg GITHUB_TOKEN "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: AutoPkg Repo Add
+        run: |
+          cat "AutoPkg/repo_list.txt" | xargs autopkg repo-add
 
       - name: Run AutoPkg
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          MUNKI_GIT_DIR: ${{ github.workspace }}/${{ env.MUNKI_CLONE_DIR }}
         run: |
-          uv run lambopkg/runners/autopkg_tools.py
-
-
-      - name: Push packages to S3
-        if: always()
-        run: |
-          if [ -d "${MUNKI_DIR}/pkgs" ]; then
-            aws s3 sync "${MUNKI_DIR}/pkgs/" s3://${{ secrets.MUNKI_S3_BUCKET }}/repo/pkgs/ --sse AES256
-          else
-            echo "No packages to sync"
-          fi
-
+          uv run cloud-autopkg-runner -v \
+            --recipe-list AutoPkg/recipe_list.json \
+            --cache-file metadata_cache.json \
+            --log-file autopkg_runner.log \
+            --pre-processor com.github.mscottblake-recipes.SharedPreProcessors/MunkiWorktreeCreator.py \
+            --post-processor com.github.mscottblake-recipes.SharedPostProcessors/MunkiWorktreeCommitter.py \
+            --post-processor com.github.mscottblake-recipes.SharedPostProcessors/CacheCleaner.py \
+            --post-processor com.github.mscottblake-recipes.SharedPostProcessors/S3Uploader.py \
+            --report-dir AutoPkg/Reports/
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        uses: actions/upload-artifact@v4
         with:
           name: autopkg-run-artifacts
           path: |
@@ -135,4 +82,3 @@ jobs:
             AutoPkg/Reports/*
             autopkg_runner.log
             metadata_cache.json
-            Munki

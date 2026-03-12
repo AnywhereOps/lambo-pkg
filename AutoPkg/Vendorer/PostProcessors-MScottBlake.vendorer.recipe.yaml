@@ -1,0 +1,16 @@
+Description: Obtain upstream Fleet recipe from autopkg/kevinmcox-recipes
+
+Identifier: com.github.anywhereops.vendorer.PostProcessors
+
+MinimumVersion: '2.3'
+
+Input: {}
+
+Process:
+  - Processor: AutopkgVendorer
+    Arguments:
+      github_repo: autopkg/mscottblake-recipes
+      folder_path: SharedPostProcessors
+      commit_sha: f52cc854837ec404e0ea6d2fe61808233c27151f
+      destination_path: PostProcessors
+      required_license: Apache-2.0

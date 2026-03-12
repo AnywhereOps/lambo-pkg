@@ -214,3 +214,6 @@ __marimo__/
 
 # Claude
 .claude
+
+# AutoPkg Cache
+AutoPkg/Cache/

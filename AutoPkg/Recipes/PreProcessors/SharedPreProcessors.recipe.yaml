@@ -1,0 +1,9 @@
+# Downloaded from https://github.com/autopkg/mscottblake-recipes/blob/f52cc854837ec404e0ea6d2fe61808233c27151f/SharedPreProcessors/SharedPreProcessors.recipe.yaml
+# Commit: f52cc854837ec404e0ea6d2fe61808233c27151f
+# Downloaded at: 2026-03-12 03:04:09 UTC
+
+Description: Recipe stub for any Pre Processors in this directory.
+Identifier: com.github.mscottblake-recipes.SharedPreProcessors
+Input: {}
+MinimumVersion: "2.3"
+Process: []

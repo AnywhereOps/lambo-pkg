@@ -283,39 +283,34 @@ class MunkiWorktreeCommitter(Processor):
             .strip()
         )
 
-    def _push_worktree_to_main(self, worktree_path: Path) -> None:
-        """Rebase isolated worktree commits onto main and push."""
+    def _push_worktree_branch(self, worktree_path: Path) -> None:
+        """Push the worktree branch to remote for auto-merge."""
         remote = self.env.get("remote", "origin")
-        target_branch = self.env.get("branch", "main")
-        max_retries = 10
+        branch_name = self.env.get("worktree_branch")
+        max_retries = 5
+
+        if not branch_name:
+            raise ProcessorError("No worktree_branch set - cannot push.")
 
         for attempt in range(1, max_retries + 1):
             try:
                 self._run_cmd(
-                    ["git", "fetch", remote, target_branch], cwd=worktree_path
-                )
-
-                self._run_cmd(
-                    ["git", "rebase", "--autostash", f"{remote}/{target_branch}"],
+                    ["git", "push", remote, f"{branch_name}:{branch_name}"],
                     cwd=worktree_path,
                 )
 
-                self._run_cmd(
-                    ["git", "push", remote, f"HEAD:{target_branch}"], cwd=worktree_path
-                )
-
-                self.output(f"Successfully pushed to {remote}/{target_branch}")
+                self.output(f"Successfully pushed branch {branch_name} to {remote}")
                 return
 
             except ProcessorError as exc:
                 self.output(f"Git push failed (attempt {attempt}). Error: {exc}")
 
                 sleep_time = random.uniform(1.0, 4.0) + attempt
-                self.output("Retrying git push in {sleep_time:.1f}s...")
+                self.output(f"Retrying git push in {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
 
         raise ProcessorError(
-            f"Failed to push to {target_branch} after {max_retries} attempts."
+            f"Failed to push branch {branch_name} after {max_retries} attempts."
         )
 
     def _cleanup(self, worktree_path: Path, original_repo: Path) -> None:
@@ -333,8 +328,11 @@ class MunkiWorktreeCommitter(Processor):
                 cwd=original_repo,
             )
 
-            # We pushed our changes to main, so the temp branch is now garbage
-            self._run_cmd(["git", "branch", "-D", branch_name], cwd=original_repo)
+            # Clean up the local temp branch (remote branch stays for auto-merge)
+            try:
+                self._run_cmd(["git", "branch", "-D", branch_name], cwd=original_repo)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -391,7 +389,7 @@ class MunkiWorktreeCommitter(Processor):
 
         if self._bool(self.env.get("push")):
             try:
-                self._push_worktree_to_main(worktree_path)
+                self._push_worktree_branch(worktree_path)
             except ProcessorError:
                 # Ensure cleanup happens even if push fails
                 do_cleanup()

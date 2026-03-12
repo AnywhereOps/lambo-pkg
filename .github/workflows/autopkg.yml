@@ -13,11 +13,51 @@ jobs:
       MUNKI_VERSION: 6.7.0
       MUNKI_EXPLICIT_VERSION: 6.7.0.4731
       APKG_VERSION: 2.7.6 # 'AUTOPKG_' gets injected as an env var
+      MUNKI_REPO: AnywhereOps/munkisrv
+
+    permissions:
+      contents: write
+      id-token: write
+
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Fetch GitHub App secret
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            MUNKISRV_APP, ${{ secrets.MUNKISRV_GITHUB_APP_ARN }}
+          parse-json-secrets: true
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for accurate diffs
+          fetch-depth: 0
+
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ env.MUNKISRV_APP_APP_ID }}
+          private-key: ${{ env.MUNKISRV_APP_PRIVATE_KEY }}
+          owner: AnywhereOps
+
+      - name: Checkout Munki repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MUNKI_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+          path: munkisrv
+
+      - name: Configure Munki repo push credentials
+        run: |
+          cd munkisrv
+          git remote set-url origin "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ env.MUNKI_REPO }}.git"
 
       - name: Setup Cache
         uses: actions/cache@v4
@@ -50,7 +90,7 @@ jobs:
       - name: Configure AutoPkg
         run: |
           AUTOPKG_DIR="${GITHUB_WORKSPACE}/AutoPkg"
-          MUNKI_DIR="${GITHUB_WORKSPACE}/Munki"
+          MUNKI_DIR="${GITHUB_WORKSPACE}/munkisrv/munkirepo"
 
           defaults write com.github.autopkg CACHE_DIR "${AUTOPKG_DIR}/Cache"
           defaults write com.github.autopkg FAIL_RECIPES_WITHOUT_TRUST_INFO -bool TRUE
@@ -63,6 +103,9 @@ jobs:
           cat "AutoPkg/repo_list.txt" | xargs autopkg repo-add
 
       - name: Run AutoPkg
+        env:
+          AUTOPKG_MUNKI_BUCKET_NAME: ${{ secrets.MUNKI_S3_BUCKET }}
+          AUTOPKG_S3_PREFIX: repo
         run: |
           uv run cloud-autopkg-runner -v \
             --recipe-list AutoPkg/recipe_list.json \
